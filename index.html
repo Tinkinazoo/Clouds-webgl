@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Процедурное небо с облаками</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+
+        if (!gl) {
+            alert('WebGL не поддерживается в вашем браузере');
+        }
+
+        // Устанавливаем размер canvas равным размеру окна
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Вершинный шейдер
+        const vsSource = `
+            attribute vec2 aPosition;
+            void main() {
+                gl_Position = vec4(aPosition, 0.0, 1.0);
+            }
+        `;
+
+        // Фрагментный шейдер с генерацией неба и облаков
+        const fsSource = `
+            precision highp float;
+            
+            uniform vec2 uResolution;
+            uniform float uTime;
+            
+            // Шум Перлина
+            float noise(vec3 p) {
+                vec3 i = floor(p);
+                vec4 a = dot(i, vec3(1., 57., 21.)) + vec4(0., 57., 21., 78.);
+                vec3 f = cos((p-i)*acos(-1.))*(-.5)+.5;
+                a = mix(sin(cos(a)*a),sin(cos(1.+a)*(1.+a)), f.x);
+                a.xy = mix(a.xz, a.yw, f.y);
+                return mix(a.x, a.y, f.z);
+            }
+            
+            // Фрактальный шум
+            float fbm(vec3 p) {
+                float f = 0.0;
+                f += 0.5000 * noise(p); p *= 2.02;
+                f += 0.2500 * noise(p); p *= 2.03;
+                f += 0.1250 * noise(p); p *= 2.01;
+                f += 0.0625 * noise(p);
+                return f;
+            }
+            
+            void main() {
+                vec2 uv = gl_FragCoord.xy / uResolution.xy;
+                uv.x *= uResolution.x / uResolution.y;
+                
+                // Градиент неба
+                vec3 skyColor = mix(
+                    vec3(0.17, 0.22, 0.35),
+                    vec3(0.46, 0.33, 0.48),
+                    sqrt(uv.y)
+                );
+                
+                // Генерация облаков
+                vec3 cloudPos = vec3(uv * 5.0, uTime * 0.05);
+                float clouds = fbm(cloudPos);
+                
+                // Формируем облака
+                clouds = smoothstep(0.3, 0.8, clouds);
+                
+                // Добавляем облака к небу
+                vec3 cloudColor = vec3(0.66, 0.61, 0.72);
+                vec3 color = mix(skyColor, cloudColor, clouds * 0.7);
+                
+                // Добавляем небольшую дымку у горизонта
+                float horizonFog = smoothstep(0.1, 0.5, uv.y);
+                color = mix(color, vec3(0.7, 0.8, 0.9), horizonFog * 0.3);
+                
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `;
+
+        // Компиляция шейдера
+        function compileShader(gl, source, type) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Ошибка компиляции шейдера:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            
+            return shader;
+        }
+
+        // Создание программы
+        function createProgram(gl, vsSource, fsSource) {
+            const vertexShader = compileShader(gl, vsSource, gl.VERTEX_SHADER);
+            const fragmentShader = compileShader(gl, fsSource, gl.FRAGMENT_SHADER);
+            
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Ошибка линковки программы:', gl.getProgramInfoLog(program));
+                return null;
+            }
+            
+            return program;
+        }
+
+        const program = createProgram(gl, vsSource, fsSource);
+        gl.useProgram(program);
+
+        // Вершины для полноэкранного квада
+        const vertices = new Float32Array([
+            -1.0, -1.0,
+             1.0, -1.0,
+            -1.0,  1.0,
+             1.0,  1.0
+        ]);
+
+        // Создание буфера вершин
+        const vertexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+        // Получение атрибутов и юниформов
+        const aPosition = gl.getAttribLocation(program, 'aPosition');
+        gl.enableVertexAttribArray(aPosition);
+        gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+
+        const uResolution = gl.getUniformLocation(program, 'uResolution');
+        const uTime = gl.getUniformLocation(program, 'uTime');
+
+        // Время для анимации
+        let time = 0;
+
+        function render() {
+            time += 0.01;
+            
+            gl.uniform2f(uResolution, canvas.width, canvas.height);
+            gl.uniform1f(uTime, time);
+            
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            
+            requestAnimationFrame(render);
+        }
+
+        render();
+    </script>
+</body>
+</html>
